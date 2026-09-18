@@ -1,8 +1,8 @@
 import datetime
 import re
 import time
+import cloudscraper
 import pandas as pd
-import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 
@@ -18,7 +18,7 @@ keywords_raw = st.text_input(
     value="니콘, 니끼끼, nikon, 나이콘, 황콘",
 )
 
-# 날짜 선택 UI (기본값: 최근 7일)
+# 날짜 선택 UI
 today = datetime.date.today()
 col1, col2 = st.columns(2)
 with col1:
@@ -27,15 +27,6 @@ with col1:
     )
 with col2:
     end_date = st.date_input("수집 종료일", value=today)
-
-# 해외 서버 IP 차단 우회용 강화된 브라우저 헤더 설정
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://gall.dcinside.com/",
-    "Connection": "keep-alive",
-}
 
 
 def parse_dc_date(date_str):
@@ -71,9 +62,14 @@ if st.button("기간 내 데이터 수집 시작"):
         status_text = st.empty()
         collected_count = 0
 
-        # 세션(Session) 객체를 생성하여 쿠키 유지 접속
-        session = requests.Session()
-        session.headers.update(HEADERS)
+        # cloudscraper로 차단 우회 스크래퍼 생성
+        scraper = cloudscraper.create_scraper(
+            browser={
+                "browser": "chrome",
+                "platform": "windows",
+                "desktop": True,
+            }
+        )
 
         for kw in keywords:
             page = 1
@@ -83,8 +79,16 @@ if st.button("기간 내 데이터 수집 시작"):
                 list_url = f"https://gall.dcinside.com/mgallery/board/lists/?id={gallery_id}&s_type=search_subject_memo&s_keyword={kw}&page={page}"
 
                 try:
-                    time.sleep(1.5)  # 서버 차단 방지용 필수 대기시간
-                    res = session.get(list_url, timeout=10)
+                    time.sleep(1.5)
+                    res = scraper.get(list_url, timeout=15)
+
+                    # 만약 403 차단이 뜨면 로그 출력
+                    if res.status_code == 403:
+                        st.error(
+                            f"디시인사이드 IP 차단(403) 발생. 키워드 [{kw}] 대기 필요"
+                        )
+                        break
+
                     soup = BeautifulSoup(res.text, "html.parser")
                     tr_list = soup.select(".gall_list tbody tr.ub-content")
 
@@ -123,7 +127,7 @@ if st.button("기간 내 데이터 수집 시작"):
 
                         # 본문 및 댓글 수집
                         time.sleep(1.5)
-                        detail_res = session.get(link, timeout=10)
+                        detail_res = scraper.get(link, timeout=15)
                         detail_soup = BeautifulSoup(
                             detail_res.text, "html.parser"
                         )
