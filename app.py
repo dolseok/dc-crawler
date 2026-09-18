@@ -14,7 +14,8 @@ st.write(
 # 1. 사용자 입력 UI
 gallery_id = st.text_input("갤러리 ID", value="digitalpicture")
 keywords_raw = st.text_input(
-    "검색어 (쉼표로 여러개 입력 가능)", value="R8, 쌀팔, r8m2"
+    "검색어 (쉼표로 여러개 입력 가능)",
+    value="니콘, 니끼끼, nikon, 나이콘, 황콘",
 )
 
 # 날짜 선택 UI (기본값: 최근 7일)
@@ -27,25 +28,27 @@ with col1:
 with col2:
     end_date = st.date_input("수집 종료일", value=today)
 
+# 해외 서버 IP 차단 우회용 강화된 브라우저 헤더 설정
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://gall.dcinside.com/",
+    "Connection": "keep-alive",
 }
 
 
-# 날짜 문자열(디시 형식)을 datetime.date 객체로 변환하는 함수
 def parse_dc_date(date_str):
     date_str = date_str.strip()
-    # 오늘 작성된 글 (예: "14:25") -> 오늘 날짜로 변환
     if ":" in date_str and len(date_str) <= 5:
         return datetime.date.today()
 
-    # 과거 글 (예: "24.09.15" 또는 "2024.09.15")
     clean_str = re.sub(r"[^\d.]", "", date_str)
     parts = clean_str.split(".")
 
     if len(parts) >= 3:
         year = int(parts[0])
-        if year < 100:  # "24" -> 2024
+        if year < 100:
             year += 2000
         month = int(parts[1])
         day = int(parts[2])
@@ -68,6 +71,10 @@ if st.button("기간 내 데이터 수집 시작"):
         status_text = st.empty()
         collected_count = 0
 
+        # 세션(Session) 객체를 생성하여 쿠키 유지 접속
+        session = requests.Session()
+        session.headers.update(HEADERS)
+
         for kw in keywords:
             page = 1
             st.write(f"🔍 **'{kw}'** 키워드 검색 시작...")
@@ -76,7 +83,8 @@ if st.button("기간 내 데이터 수집 시작"):
                 list_url = f"https://gall.dcinside.com/mgallery/board/lists/?id={gallery_id}&s_type=search_subject_memo&s_keyword={kw}&page={page}"
 
                 try:
-                    res = requests.get(list_url, headers=HEADERS)
+                    time.sleep(1.5)  # 서버 차단 방지용 필수 대기시간
+                    res = session.get(list_url, timeout=10)
                     soup = BeautifulSoup(res.text, "html.parser")
                     tr_list = soup.select(".gall_list tbody tr.ub-content")
 
@@ -95,15 +103,12 @@ if st.button("기간 내 데이터 수집 시작"):
                         if not title_tag or not date_tag:
                             continue
 
-                        # 날짜 파싱 및 검증
                         post_date = parse_dc_date(date_tag.text)
 
-                        # 설정한 시작일보다 이전 글이면 수집 탐색 중단 카운트 증가
                         if post_date < start_date:
                             out_of_range_count += 1
                             continue
 
-                        # 종료일보다 최신 글이면 스킵하고 더 과거 글 탐색
                         if post_date > end_date:
                             continue
 
@@ -116,9 +121,9 @@ if st.button("기간 내 데이터 수집 시작"):
                         seen_links.add(link)
                         title = title_tag.text.strip()
 
-                        # --- 본문 및 댓글 수집 ---
-                        time.sleep(1.2)  # 차단 방지 지연
-                        detail_res = requests.get(link, headers=HEADERS)
+                        # 본문 및 댓글 수집
+                        time.sleep(1.5)
+                        detail_res = session.get(link, timeout=10)
                         detail_soup = BeautifulSoup(
                             detail_res.text, "html.parser"
                         )
@@ -151,11 +156,7 @@ if st.button("기간 내 데이터 수집 시작"):
                             f"수집 중 ({collected_count}개 완료): [{post_date}] {title[:20]}..."
                         )
 
-                    # 현재 페이지의 게시물 다수가 시작일보다 이전 글이면 해당 키워드 수집 종료
                     if out_of_range_count >= len(tr_list) - 2:
-                        print(
-                            f"[{kw}] 설정한 시작일({start_date}) 이전 게시글 영역에 도달하여 수집을 완료합니다."
-                        )
                         break
 
                     page += 1
